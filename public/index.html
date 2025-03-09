@@ -1,0 +1,108 @@
+<!-- public/index.html -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat de Áudio em Tempo Real</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <link href="styles.css" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <!-- Tela inicial para login -->
+    <div id="login-screen" class="container">
+      <h1>Chat de Áudio em Tempo Real</h1>
+      <div class="form-container">
+        <div class="input-group">
+          <label for="username">Seu nome:</label>
+          <input type="text" id="username" placeholder="Digite seu nome" required>
+        </div>
+        
+        <div class="rooms-section">
+          <h2>Salas Disponíveis</h2>
+          <div id="rooms-list" class="rooms-grid">
+            <!-- As salas serão geradas dinamicamente -->
+          </div>
+          
+          <div class="input-group">
+            <label for="custom-room">Ou entre em uma sala específica:</label>
+            <div class="room-input-container">
+              <input type="text" id="custom-room" placeholder="ID da sala">
+              <button id="join-custom-room" class="btn">Entrar</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tela da sala de chat -->
+    <div id="room-screen" class="container hidden">
+      <div class="room-header">
+        <h1 id="room-name">Sala</h1>
+        <button id="leave-room" class="btn btn-danger">
+          <i class="fas fa-sign-out-alt"></i> Sair da Sala
+        </button>
+      </div>
+      
+      <div class="audio-controls">
+        <button id="mic-toggle" class="btn btn-primary">
+          <i class="fas fa-microphone"></i> Ativar Microfone
+        </button>
+        <div class="audio-status">
+          <span id="mic-status">Microfone: Desativado</span>
+          <div id="volume-meter" class="volume-meter">
+            <div id="volume-bar" class="volume-bar"></div>
+          </div>
+        </div>
+      </div>
+      
+      <div class="users-container">
+        <h2>Usuários na Sala</h2>
+        <div id="users-list" class="users-grid">
+          <!-- Usuários serão adicionados dinamicamente -->
+        </div>
+      </div>
+      
+      <div class="room-status">
+        <div id="connection-status" class="status-indicator connected">
+          Conectado
+        </div>
+        <div id="speaking-indicator" class="status-indicator">
+          Ninguém está falando no momento
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modelo para card de sala -->
+  <template id="room-card-template">
+    <div class="room-card">
+      <div class="room-info">
+        <h3 class="room-card-name"></h3>
+        <p class="room-users-count"></p>
+      </div>
+      <button class="btn btn-primary join-room-btn">Entrar</button>
+    </div>
+  </template>
+
+  <!-- Modelo para card de usuário -->
+  <template id="user-card-template">
+    <div class="user-card">
+      <div class="avatar">
+        <i class="fas fa-user"></i>
+      </div>
+      <div class="user-info">
+        <p class="username"></p>
+        <div class="speaking-indicator">
+          <i class="fas fa-volume-up"></i>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- Scripts -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
