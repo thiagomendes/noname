@@ -51,19 +51,19 @@ app.get('/', (req, res) => {
 });
 
 // API para obter lista de salas
-app.get('/api/rooms', (req, res) => {
+app.get('/api/rooms', async (req, res) => {
   try {
-    const rooms = roomsDB.getAllRooms();
+    const rooms = await roomsDB.getAllRooms();
     
     // Transformar dados para manter compatibilidade com formato anterior
-    const roomList = rooms.map(room => {
-      const participants = roomsDB.getRoomParticipants(room.id);
+    const roomList = await Promise.all(rooms.map(async room => {
+      const participants = await roomsDB.getRoomParticipants(room.id);
       return {
         id: room.id,
         name: room.name,
         userCount: participants.length
       };
-    });
+    }));
     
     res.json({ rooms: roomList });
   } catch (error) {
@@ -77,96 +77,87 @@ io.on('connection', (socket) => {
   console.log('Novo usuário conectado:', socket.id);
   
   // Evento: Usuário entra em uma sala
-  socket.on('join-room', ({ roomId, username }) => {
-    const userId = socket.id;
-    
-    // Verificar se a sala existe
-    let room = roomsDB.getRoom(roomId);
-    
-    // Criar a sala se não existir
-    if (!room) {
-      const newRoom = {
-        id: roomId,
-        name: roomId,
-        createdAt: Date.now(),
-        maxParticipants: 10,
-        isPrivate: false,
-        creatorId: userId
-      };
-      
-      roomsDB.createRoom(newRoom);
-      room = newRoom;
-    }
-    
-    // Adicionar usuário à sala
-    const participant = {
-      id: userId,
-      roomId: roomId,
-      name: username,
-      joinedAt: Date.now(),
-      peerId: null
-    };
-    
-    roomsDB.addParticipant(participant);
-    
-    // Adicionando socket à sala
-    socket.join(roomId);
-    
-    // Obter todos os participantes da sala
-    const participants = roomsDB.getRoomParticipants(roomId);
-    
-    // Transformar para o formato esperado pelos clientes
-    const users = {};
-    participants.forEach(p => {
-      users[p.id] = {
-        username: p.name,
-        peerId: p.peerId
-      };
-    });
-    
-    // Notificando a todos na sala sobre o novo usuário
-    io.to(roomId).emit('user-joined', { 
-      userId, 
-      username, 
-      users 
-    });
-    
-    console.log(`${username} entrou na sala ${roomId}`);
-    
-    // Enviando lista de usuários na sala para o novo usuário
-    socket.emit('room-users', { 
-      roomId, 
-      users 
-    });
-  });
-  
-  // Evento: Usuário atualiza seu peer ID
-  socket.on('user-peer-id', ({ roomId, peerId }) => {
+  socket.on('join-room', async ({ roomId, username }) => {
     const userId = socket.id;
     
     try {
-      // Obter participante
-      const participants = roomsDB.getRoomParticipants(roomId);
-      const participant = participants.find(p => p.id === userId);
+      // Verificar se a sala existe
+      let room = await roomsDB.getRoom(roomId);
       
-      if (participant) {
-        // Atualizar o peerId - como não temos diretamente um método de atualização
-        // vamos remover e adicionar novamente com o peerId atualizado
-        roomsDB.removeParticipant(userId);
-        
-        const updatedParticipant = {
-          ...participant,
-          peerId: peerId
+      // Criar a sala se não existir
+      if (!room) {
+        const newRoom = {
+          id: roomId,
+          name: roomId,
+          createdAt: Date.now(),
+          maxParticipants: 10,
+          isPrivate: false,
+          creatorId: userId
         };
         
-        roomsDB.addParticipant(updatedParticipant);
-        
-        // Informando outros usuários sobre o novo peer ID
-        socket.to(roomId).emit('user-peer-updated', { 
-          userId, 
-          peerId 
-        });
+        await roomsDB.createRoom(newRoom);
+        room = newRoom;
       }
+      
+      // Adicionar usuário à sala
+      const participant = {
+        id: userId,
+        roomId: roomId,
+        name: username,
+        joinedAt: Date.now(),
+        peerId: null
+      };
+      
+      await roomsDB.addParticipant(participant);
+      
+      // Adicionando socket à sala
+      socket.join(roomId);
+      
+      // Obter todos os participantes da sala
+      const participants = await roomsDB.getRoomParticipants(roomId);
+      
+      // Transformar para o formato esperado pelos clientes
+      const users = {};
+      participants.forEach(p => {
+        users[p.id] = {
+          username: p.name,
+          peerId: p.peerId
+        };
+      });
+      
+      // Notificando a todos na sala sobre o novo usuário
+      io.to(roomId).emit('user-joined', { 
+        userId, 
+        username, 
+        users 
+      });
+      
+      console.log(`${username} entrou na sala ${roomId}`);
+      
+      // Enviando lista de usuários na sala para o novo usuário
+      socket.emit('room-users', { 
+        roomId, 
+        users 
+      });
+    } catch (error) {
+      console.error('Erro ao entrar na sala:', error);
+      socket.emit('error', { message: 'Erro ao entrar na sala' });
+    }
+  });
+  
+  // Evento: Usuário atualiza seu peer ID
+  socket.on('user-peer-id', async ({ roomId, peerId }) => {
+    const userId = socket.id;
+    
+    try {
+      // Atualizar o peerId diretamente
+      await roomsDB.updateParticipant(userId, { peerId: peerId });
+      
+      // Informando outros usuários sobre o novo peer ID
+      socket.to(roomId).emit('user-peer-updated', { 
+        userId, 
+        peerId 
+      });
     } catch (error) {
       console.error('Erro ao atualizar peerId:', error);
     }
@@ -195,22 +186,22 @@ io.on('connection', (socket) => {
   });
   
   // Evento: Desconexão
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log('Usuário desconectado:', socket.id);
     
     try {
-      // Obter todas as salas
-      const rooms = roomsDB.getAllRooms();
+      // Encontrar em quais salas o usuário está
+      const allRooms = await roomsDB.getAllRooms();
       
-      // Verificar cada sala para encontrar o participante
-      rooms.forEach(room => {
-        const participants = roomsDB.getRoomParticipants(room.id);
+      // Procurar o participante em cada sala (otimizado)
+      for (const room of allRooms) {
+        const participants = await roomsDB.getRoomParticipants(room.id);
         const isInRoom = participants.some(p => p.id === socket.id);
         
         if (isInRoom) {
-          leaveRoom(socket, room.id);
+          await leaveRoom(socket, room.id);
         }
-      });
+      }
     } catch (error) {
       console.error('Erro ao processar desconexão:', error);
     }
@@ -218,26 +209,26 @@ io.on('connection', (socket) => {
 });
 
 // Função auxiliar para remover usuário de uma sala
-function leaveRoom(socket, roomId) {
+async function leaveRoom(socket, roomId) {
   const userId = socket.id;
   
   try {
     // Obter participantes da sala
-    const participants = roomsDB.getRoomParticipants(roomId);
+    const participants = await roomsDB.getRoomParticipants(roomId);
     const participant = participants.find(p => p.id === userId);
     
     if (participant) {
       const username = participant.name;
       
       // Remover participante
-      roomsDB.removeParticipant(userId);
+      await roomsDB.removeParticipant(userId);
       
       // Verificar se a sala está vazia
-      const remainingParticipants = roomsDB.getRoomParticipants(roomId);
+      const remainingParticipants = await roomsDB.getRoomParticipants(roomId);
       
       if (remainingParticipants.length === 0) {
         // Remover sala se estiver vazia
-        roomsDB.deleteRoom(roomId);
+        await roomsDB.deleteRoom(roomId);
         console.log(`Sala ${roomId} removida por estar vazia`);
       } else {
         // Notificando outros usuários sobre a saída
