@@ -16,8 +16,8 @@ app.use(cors());
 // Opções para HTTPS 
 // Para ambiente de produção, substitua os caminhos pelos seus certificados reais
 const httpsOptions = {
-  key: fs.readFileSync(process.env.SSL_KEY_PATH),
-  cert: fs.readFileSync(process.env.SSL_CERT_PATH)
+  key: fs.readFileSync(path.join(__dirname, 'certificates', 'key.pem')),
+  cert: fs.readFileSync(path.join(__dirname, 'certificates', 'cert.pem'))
 };
 
 // Criar servidores HTTP e HTTPS
