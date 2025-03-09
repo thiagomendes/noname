@@ -6,12 +6,14 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const cors = require('cors');
 const fs = require('fs');
+const roomsDB = require('./db'); // Importando o módulo de banco de dados
 
 // Inicializando o app Express
 const app = express();
 
 // Configuração do CORS
 app.use(cors());
+app.use(express.json());
 
 // Opções para HTTPS 
 // Para ambiente de produção, substitua os caminhos pelos seus certificados reais
@@ -35,19 +37,6 @@ const io = socketIO(httpsServer, {
 // Servindo arquivos estáticos
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Estrutura de dados para controlar usuários e salas
-const rooms = {};
-/*
-{
-  "sala1": {
-    users: {
-      "userId1": { username: "User1", peerId: "peer-id-1" },
-      "userId2": { username: "User2", peerId: "peer-id-2" }
-    }
-  }
-}
-*/
-
 // Redirecionar HTTP para HTTPS
 app.use((req, res, next) => {
   if (!req.secure && process.env.NODE_ENV === 'production') {
@@ -63,14 +52,24 @@ app.get('/', (req, res) => {
 
 // API para obter lista de salas
 app.get('/api/rooms', (req, res) => {
-  const roomList = Object.keys(rooms).map(roomId => {
-    return {
-      id: roomId,
-      name: roomId,
-      userCount: Object.keys(rooms[roomId].users).length
-    };
-  });
-  res.json({ rooms: roomList });
+  try {
+    const rooms = roomsDB.getAllRooms();
+    
+    // Transformar dados para manter compatibilidade com formato anterior
+    const roomList = rooms.map(room => {
+      const participants = roomsDB.getRoomParticipants(room.id);
+      return {
+        id: room.id,
+        name: room.name,
+        userCount: participants.length
+      };
+    });
+    
+    res.json({ rooms: roomList });
+  } catch (error) {
+    console.error('Erro ao obter salas:', error);
+    res.status(500).json({ error: 'Erro ao obter salas' });
+  }
 });
 
 // Configurando eventos de WebSocket
@@ -81,25 +80,55 @@ io.on('connection', (socket) => {
   socket.on('join-room', ({ roomId, username }) => {
     const userId = socket.id;
     
-    // Criando a sala se não existir
-    if (!rooms[roomId]) {
-      rooms[roomId] = { users: {} };
+    // Verificar se a sala existe
+    let room = roomsDB.getRoom(roomId);
+    
+    // Criar a sala se não existir
+    if (!room) {
+      const newRoom = {
+        id: roomId,
+        name: roomId,
+        createdAt: Date.now(),
+        maxParticipants: 10,
+        isPrivate: false,
+        creatorId: userId
+      };
+      
+      roomsDB.createRoom(newRoom);
+      room = newRoom;
     }
     
-    // Adicionando usuário à sala
-    rooms[roomId].users[userId] = { 
-      username, 
-      peerId: null 
+    // Adicionar usuário à sala
+    const participant = {
+      id: userId,
+      roomId: roomId,
+      name: username,
+      joinedAt: Date.now(),
+      peerId: null
     };
+    
+    roomsDB.addParticipant(participant);
     
     // Adicionando socket à sala
     socket.join(roomId);
+    
+    // Obter todos os participantes da sala
+    const participants = roomsDB.getRoomParticipants(roomId);
+    
+    // Transformar para o formato esperado pelos clientes
+    const users = {};
+    participants.forEach(p => {
+      users[p.id] = {
+        username: p.name,
+        peerId: p.peerId
+      };
+    });
     
     // Notificando a todos na sala sobre o novo usuário
     io.to(roomId).emit('user-joined', { 
       userId, 
       username, 
-      users: rooms[roomId].users 
+      users 
     });
     
     console.log(`${username} entrou na sala ${roomId}`);
@@ -107,7 +136,7 @@ io.on('connection', (socket) => {
     // Enviando lista de usuários na sala para o novo usuário
     socket.emit('room-users', { 
       roomId, 
-      users: rooms[roomId].users 
+      users 
     });
   });
   
@@ -115,14 +144,31 @@ io.on('connection', (socket) => {
   socket.on('user-peer-id', ({ roomId, peerId }) => {
     const userId = socket.id;
     
-    if (rooms[roomId]?.users[userId]) {
-      rooms[roomId].users[userId].peerId = peerId;
+    try {
+      // Obter participante
+      const participants = roomsDB.getRoomParticipants(roomId);
+      const participant = participants.find(p => p.id === userId);
       
-      // Informando outros usuários sobre o novo peer ID
-      socket.to(roomId).emit('user-peer-updated', { 
-        userId, 
-        peerId 
-      });
+      if (participant) {
+        // Atualizar o peerId - como não temos diretamente um método de atualização
+        // vamos remover e adicionar novamente com o peerId atualizado
+        roomsDB.removeParticipant(userId);
+        
+        const updatedParticipant = {
+          ...participant,
+          peerId: peerId
+        };
+        
+        roomsDB.addParticipant(updatedParticipant);
+        
+        // Informando outros usuários sobre o novo peer ID
+        socket.to(roomId).emit('user-peer-updated', { 
+          userId, 
+          peerId 
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao atualizar peerId:', error);
     }
   });
   
@@ -152,12 +198,22 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('Usuário desconectado:', socket.id);
     
-    // Removendo usuário de todas as salas
-    Object.keys(rooms).forEach(roomId => {
-      if (rooms[roomId].users[socket.id]) {
-        leaveRoom(socket, roomId);
-      }
-    });
+    try {
+      // Obter todas as salas
+      const rooms = roomsDB.getAllRooms();
+      
+      // Verificar cada sala para encontrar o participante
+      rooms.forEach(room => {
+        const participants = roomsDB.getRoomParticipants(room.id);
+        const isInRoom = participants.some(p => p.id === socket.id);
+        
+        if (isInRoom) {
+          leaveRoom(socket, room.id);
+        }
+      });
+    } catch (error) {
+      console.error('Erro ao processar desconexão:', error);
+    }
   });
 });
 
@@ -165,27 +221,38 @@ io.on('connection', (socket) => {
 function leaveRoom(socket, roomId) {
   const userId = socket.id;
   
-  if (rooms[roomId] && rooms[roomId].users[userId]) {
-    const username = rooms[roomId].users[userId].username;
+  try {
+    // Obter participantes da sala
+    const participants = roomsDB.getRoomParticipants(roomId);
+    const participant = participants.find(p => p.id === userId);
     
-    // Removendo usuário da sala
-    delete rooms[roomId].users[userId];
-    
-    // Removendo sala se estiver vazia
-    if (Object.keys(rooms[roomId].users).length === 0) {
-      delete rooms[roomId];
-      console.log(`Sala ${roomId} removida por estar vazia`);
-    } else {
-      // Notificando outros usuários sobre a saída
-      socket.to(roomId).emit('user-left', { 
-        userId, 
-        username 
-      });
+    if (participant) {
+      const username = participant.name;
+      
+      // Remover participante
+      roomsDB.removeParticipant(userId);
+      
+      // Verificar se a sala está vazia
+      const remainingParticipants = roomsDB.getRoomParticipants(roomId);
+      
+      if (remainingParticipants.length === 0) {
+        // Remover sala se estiver vazia
+        roomsDB.deleteRoom(roomId);
+        console.log(`Sala ${roomId} removida por estar vazia`);
+      } else {
+        // Notificando outros usuários sobre a saída
+        socket.to(roomId).emit('user-left', { 
+          userId, 
+          username 
+        });
+      }
+      
+      // Removendo socket da sala
+      socket.leave(roomId);
+      console.log(`${username} saiu da sala ${roomId}`);
     }
-    
-    // Removendo socket da sala
-    socket.leave(roomId);
-    console.log(`${username} saiu da sala ${roomId}`);
+  } catch (error) {
+    console.error('Erro ao sair da sala:', error);
   }
 }
 
