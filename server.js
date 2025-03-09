@@ -1,200 +1,204 @@
-// https-server.js
 const express = require('express');
 const http = require('http');
 const https = require('https');
-const socketIo = require('socket.io');
+const socketIO = require('socket.io');
 const path = require('path');
+const { v4: uuidv4 } = require('uuid');
+const cors = require('cors');
 const fs = require('fs');
-const { execSync } = require('child_process');
 
+// Inicializando o app Express
 const app = express();
 
-// Verificar se os certificados existem, caso contrário, criar certificados auto-assinados
-const certPath = path.join(__dirname, 'certs');
-const keyPath = path.join(certPath, 'key.pem');
-const certFilePath = path.join(certPath, 'cert.pem');
+// Configuração do CORS
+app.use(cors());
 
-if (!fs.existsSync(certPath)) {
-    console.log('Pasta de certificados não encontrada. Criando...');
-    fs.mkdirSync(certPath, { recursive: true });
-}
+// Opções para HTTPS 
+// Para ambiente de produção, substitua os caminhos pelos seus certificados reais
+const httpsOptions = {
+  key: fs.readFileSync(process.env.SSL_KEY_PATH || path.join(__dirname, 'certificates', 'key.pem')),
+  cert: fs.readFileSync(process.env.SSL_CERT_PATH || path.join(__dirname, 'certificates', 'cert.pem'))
+};
 
-if (!fs.existsSync(keyPath) || !fs.existsSync(certFilePath)) {
-    console.log('Certificados não encontrados. Gerando certificados auto-assinados...');
-    try {
-        // Comando para gerar certificados auto-assinados
-        const cmd = `openssl req -x509 -newkey rsa:4096 -keyout ${keyPath} -out ${certFilePath} -days 365 -nodes -subj "/CN=localhost"`;
-        execSync(cmd);
-        console.log('Certificados gerados com sucesso!');
-    } catch (error) {
-        console.error('Erro ao gerar certificados:', error.message);
-        console.log('Continuando apenas com HTTP...');
-    }
-}
+// Criar servidores HTTP e HTTPS
+const httpServer = http.createServer(app);
+const httpsServer = https.createServer(httpsOptions, app);
 
-// Servir arquivos estáticos da pasta 'public'
+// Configurando o Socket.IO para o servidor HTTPS
+const io = socketIO(httpsServer, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+// Servindo arquivos estáticos
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Estrutura para armazenar informações de usuários e salas
+// Estrutura de dados para controlar usuários e salas
 const rooms = {};
-
-// Criar servidor HTTP
-const httpServer = http.createServer(app);
-
-// Tentar criar servidor HTTPS se os certificados existirem
-let httpsServer;
-if (fs.existsSync(keyPath) && fs.existsSync(certFilePath)) {
-    const httpsOptions = {
-        key: fs.readFileSync(keyPath),
-        cert: fs.readFileSync(certFilePath)
-    };
-    httpsServer = https.createServer(httpsOptions, app);
+/*
+{
+  "sala1": {
+    users: {
+      "userId1": { username: "User1", peerId: "peer-id-1" },
+      "userId2": { username: "User2", peerId: "peer-id-2" }
+    }
+  }
 }
+*/
 
-// Inicializar Socket.io em ambos os servidores se estiverem disponíveis
-const io = socketIo(httpServer);
-let httpsIo;
-if (httpsServer) {
-    httpsIo = socketIo(httpsServer);
+// Redirecionar HTTP para HTTPS
+app.use((req, res, next) => {
+  if (!req.secure && process.env.NODE_ENV === 'production') {
+    return res.redirect(`https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
 
-    // Função para configurar os eventos do Socket.io
-    const setupSocketEvents = (socketInstance) => {
-        socketInstance.on('connection', (socket) => {
-            console.log('Novo usuário conectado:', socket.id);
+// Resposta padrão para requisições à raiz
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
-            // Usuário entra em uma sala
-            socket.on('joinRoom', ({ username, roomId }) => {
-                // Sai de todas as salas anteriores
-                if (socket.roomId) {
-                    socket.leave(socket.roomId);
-                    if (rooms[socket.roomId]) {
-                        // Remove o usuário da sala anterior
-                        delete rooms[socket.roomId].users[socket.id];
-                        // Notifica os outros usuários
-                        socketInstance.to(socket.roomId).emit('userLeft', { userId: socket.id, username: socket.username });
-                    }
-                }
-
-                // Entra na nova sala
-                socket.join(roomId);
-                socket.username = username;
-                socket.roomId = roomId;
-
-                // Inicializa a sala se não existir
-                if (!rooms[roomId]) {
-                    rooms[roomId] = {
-                        id: roomId,
-                        name: `Sala ${roomId}`,
-                        users: {}
-                    };
-                }
-
-                // Adiciona o usuário à sala
-                rooms[roomId].users[socket.id] = {
-                    id: socket.id,
-                    username: username,
-                    isSpeaking: false
-                };
-
-                // Notifica todos na sala sobre o novo usuário
-                socketInstance.to(roomId).emit('userJoined', {
-                    userId: socket.id,
-                    username: username,
-                    roomInfo: rooms[roomId]
-                });
-
-                // Envia informações da sala para o novo usuário
-                socket.emit('roomInfo', rooms[roomId]);
-
-                console.log(`${username} entrou na sala ${roomId}`);
-            });
-
-            // Recebe dados de áudio de um usuário e transmite para todos na sala
-            socket.on('audioData', (data) => {
-                if (socket.roomId) {
-                    // Marca o usuário como falando
-                    if (rooms[socket.roomId] && rooms[socket.roomId].users[socket.id]) {
-                        rooms[socket.roomId].users[socket.id].isSpeaking = true;
-
-                        // Notifica todos que o usuário está falando
-                        socketInstance.to(socket.roomId).emit('userSpeakingStatus', {
-                            userId: socket.id,
-                            isSpeaking: true
-                        });
-
-                        // Envia os dados de áudio para todos na sala (exceto o remetente)
-                        socket.to(socket.roomId).emit('audioData', {
-                            userId: socket.id,
-                            username: socket.username,
-                            audioData: data
-                        });
-
-                        // Programa para desativar o status de "falando" após um breve período sem dados
-                        if (socket.speakTimeout) clearTimeout(socket.speakTimeout);
-                        socket.speakTimeout = setTimeout(() => {
-                            if (rooms[socket.roomId] && rooms[socket.roomId].users[socket.id]) {
-                                rooms[socket.roomId].users[socket.id].isSpeaking = false;
-                                socketInstance.to(socket.roomId).emit('userSpeakingStatus', {
-                                    userId: socket.id,
-                                    isSpeaking: false
-                                });
-                            }
-                        }, 300); // 300ms de silêncio = não está falando
-                    }
-                }
-            });
-
-            // Tratar a desconexão do usuário
-            socket.on('disconnect', () => {
-                console.log('Usuário desconectado:', socket.id, socket.username);
-
-                if (socket.roomId && rooms[socket.roomId]) {
-                    // Remove o usuário da sala
-                    delete rooms[socket.roomId].users[socket.id];
-
-                    // Notifica os outros usuários sobre a saída
-                    socketInstance.to(socket.roomId).emit('userLeft', {
-                        userId: socket.id,
-                        username: socket.username
-                    });
-
-                    // Limpa a sala se estiver vazia
-                    if (Object.keys(rooms[socket.roomId].users).length === 0) {
-                        delete rooms[socket.roomId];
-                        console.log(`Sala ${socket.roomId} foi removida por estar vazia`);
-                    }
-                }
-            });
-        });
+// API para obter lista de salas
+app.get('/api/rooms', (req, res) => {
+  const roomList = Object.keys(rooms).map(roomId => {
+    return {
+      id: roomId,
+      name: roomId,
+      userCount: Object.keys(rooms[roomId].users).length
     };
-
-    // Configurar eventos para ambos os servidores
-    setupSocketEvents(io);
-    setupSocketEvents(httpsIo);
-}
-
-// Certifique-se de que o servidor sempre retorna o arquivo index.html para rotas não encontradas
-// Isso permite que a SPA gerencie as rotas do lado do cliente
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  });
+  res.json({ rooms: roomList });
 });
 
-// Adicionar informação sobre protocolo na página inicial
-app.get('/', (req, res, next) => {
-    // Continuar com o fluxo normal
-    next();
-});
-
-// Iniciar os servidores
-const HTTP_PORT = process.env.HTTP_PORT || 3000;
-const HTTPS_PORT = process.env.HTTPS_PORT || 3443;
-
-httpServer.listen(HTTP_PORT, () => {
-    console.log(`Servidor HTTP rodando na porta ${HTTP_PORT}`);
-});
-
-if (httpsServer) {
-    server.listen(PORT, '0.0.0.0', () => {
-        console.log(`Servidor HTTPS rodando na porta ${HTTPS_PORT}`);
+// Configurando eventos de WebSocket
+io.on('connection', (socket) => {
+  console.log('Novo usuário conectado:', socket.id);
+  
+  // Evento: Usuário entra em uma sala
+  socket.on('join-room', ({ roomId, username }) => {
+    const userId = socket.id;
+    
+    // Criando a sala se não existir
+    if (!rooms[roomId]) {
+      rooms[roomId] = { users: {} };
+    }
+    
+    // Adicionando usuário à sala
+    rooms[roomId].users[userId] = { 
+      username, 
+      peerId: null 
+    };
+    
+    // Adicionando socket à sala
+    socket.join(roomId);
+    
+    // Notificando a todos na sala sobre o novo usuário
+    io.to(roomId).emit('user-joined', { 
+      userId, 
+      username, 
+      users: rooms[roomId].users 
     });
+    
+    console.log(`${username} entrou na sala ${roomId}`);
+    
+    // Enviando lista de usuários na sala para o novo usuário
+    socket.emit('room-users', { 
+      roomId, 
+      users: rooms[roomId].users 
+    });
+  });
+  
+  // Evento: Usuário atualiza seu peer ID
+  socket.on('user-peer-id', ({ roomId, peerId }) => {
+    const userId = socket.id;
+    
+    if (rooms[roomId]?.users[userId]) {
+      rooms[roomId].users[userId].peerId = peerId;
+      
+      // Informando outros usuários sobre o novo peer ID
+      socket.to(roomId).emit('user-peer-updated', { 
+        userId, 
+        peerId 
+      });
+    }
+  });
+  
+  // Evento: Sinalização WebRTC
+  socket.on('signal', ({ userId, signal }) => {
+    io.to(userId).emit('signal', {
+      userId: socket.id,
+      signal
+    });
+  });
+  
+  // Evento: Usuário começa a falar
+  socket.on('user-speaking', ({ roomId, isSpeaking }) => {
+    const userId = socket.id;
+    socket.to(roomId).emit('user-speaking-state', {
+      userId,
+      isSpeaking
+    });
+  });
+  
+  // Evento: Usuário sai de uma sala
+  socket.on('leave-room', ({ roomId }) => {
+    leaveRoom(socket, roomId);
+  });
+  
+  // Evento: Desconexão
+  socket.on('disconnect', () => {
+    console.log('Usuário desconectado:', socket.id);
+    
+    // Removendo usuário de todas as salas
+    Object.keys(rooms).forEach(roomId => {
+      if (rooms[roomId].users[socket.id]) {
+        leaveRoom(socket, roomId);
+      }
+    });
+  });
+});
+
+// Função auxiliar para remover usuário de uma sala
+function leaveRoom(socket, roomId) {
+  const userId = socket.id;
+  
+  if (rooms[roomId] && rooms[roomId].users[userId]) {
+    const username = rooms[roomId].users[userId].username;
+    
+    // Removendo usuário da sala
+    delete rooms[roomId].users[userId];
+    
+    // Removendo sala se estiver vazia
+    if (Object.keys(rooms[roomId].users).length === 0) {
+      delete rooms[roomId];
+      console.log(`Sala ${roomId} removida por estar vazia`);
+    } else {
+      // Notificando outros usuários sobre a saída
+      socket.to(roomId).emit('user-left', { 
+        userId, 
+        username 
+      });
+    }
+    
+    // Removendo socket da sala
+    socket.leave(roomId);
+    console.log(`${username} saiu da sala ${roomId}`);
+  }
 }
+
+// Configuração de portas
+const HTTP_PORT = process.env.HTTP_PORT || 80;
+const HTTPS_PORT = process.env.HTTPS_PORT || 443;
+
+// Iniciando os servidores
+httpServer.listen(HTTP_PORT, () => {
+  console.log(`Servidor HTTP rodando na porta ${HTTP_PORT}`);
+});
+
+httpsServer.listen(HTTPS_PORT, () => {
+  console.log(`Servidor HTTPS rodando na porta ${HTTPS_PORT}`);
+  console.log(`Acesse: https://seu-dominio:${HTTPS_PORT}`);
+});

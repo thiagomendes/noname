@@ -1,0 +1,46 @@
+# Dependências
+node_modules/
+package-lock.json
+yarn.lock
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Diretório de certificados SSL para desenvolvimento local
+certificates/
+
+# Ambiente
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Arquivos de cache de sistema operacional
+.DS_Store
+Thumbs.db
+
+# IDEs e editores
+/.idea
+/.vscode
+*.swp
+*.swo
+.project
+.classpath
+.c9/
+*.launch
+*.sublime-workspace
+
+# Arquivos de build/produção
+/dist
+/build
+/tmp
+/out-tsc
+
+# Arquivos temporários
+*.tmp
+*.bak

@@ -1,108 +1,181 @@
-<!-- public/index.html -->
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-br">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chat de Áudio em Tempo Real</title>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-  <link href="styles.css" rel="stylesheet">
+  <title>Voice Rooms - Salas de Áudio em Tempo Real</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div id="app">
-    <!-- Tela inicial para login -->
-    <div id="login-screen" class="container">
-      <h1>Chat de Áudio em Tempo Real</h1>
-      <div class="form-container">
-        <div class="input-group">
-          <label for="username">Seu nome:</label>
-          <input type="text" id="username" placeholder="Digite seu nome" required>
-        </div>
-        
-        <div class="rooms-section">
-          <h2>Salas Disponíveis</h2>
-          <div id="rooms-list" class="rooms-grid">
-            <!-- As salas serão geradas dinamicamente -->
-          </div>
-          
-          <div class="input-group">
-            <label for="custom-room">Ou entre em uma sala específica:</label>
-            <div class="room-input-container">
-              <input type="text" id="custom-room" placeholder="ID da sala">
-              <button id="join-custom-room" class="btn">Entrar</button>
-            </div>
+  <!-- Cabeçalho -->
+  <header>
+    <div class="logo">
+      <i class="fas fa-microphone-alt"></i>
+      <span>Voice Rooms</span>
+    </div>
+    <div id="user-info" class="hidden">
+      <span id="username-display"></span>
+    </div>
+  </header>
+  
+  <!-- Tela de boas-vindas -->
+  <div id="welcome-screen" class="container welcome-screen">
+    <div>
+      <h1 class="welcome-title">Bem-vindo ao Voice Rooms</h1>
+      <p class="welcome-subtitle">Converse em tempo real com seus amigos em salas de áudio. Entre em uma sala existente ou crie sua própria sala.</p>
+    </div>
+    
+    <button id="join-room-btn" class="btn btn-primary btn-lg">
+      <i class="fas fa-sign-in-alt"></i>
+      Entrar em uma sala
+    </button>
+    
+    <div>
+      <h2>Salas Disponíveis</h2>
+      <div id="rooms-grid" class="rooms-grid">
+        <!-- Salas serão carregadas aqui dinamicamente -->
+        <div class="room-card featured">
+          <h3 class="room-name">Carregando salas...</h3>
+          <div class="room-info">
+            <i class="fas fa-user"></i>
+            <span>-</span>
           </div>
         </div>
       </div>
     </div>
-
-    <!-- Tela da sala de chat -->
-    <div id="room-screen" class="container hidden">
-      <div class="room-header">
-        <h1 id="room-name">Sala</h1>
-        <button id="leave-room" class="btn btn-danger">
-          <i class="fas fa-sign-out-alt"></i> Sair da Sala
+    
+    <div class="create-room-button tooltip" data-tooltip="Criar Nova Sala" id="create-room-btn">
+      <i class="fas fa-plus"></i>
+    </div>
+  </div>
+  
+  <!-- Tela da sala -->
+  <div id="room-screen" class="container room-screen">
+    <div class="room-header">
+      <h1 class="room-title">
+        <i class="fas fa-users"></i>
+        <span id="current-room-name">Nome da Sala</span>
+      </h1>
+      <div class="room-action">
+        <button id="invite-btn" class="btn btn-outline">
+          <i class="fas fa-share-alt"></i>
+          Convidar
+        </button>
+        <button id="leave-room-btn" class="btn btn-danger">
+          <i class="fas fa-sign-out-alt"></i>
+          Sair da Sala
         </button>
       </div>
-      
-      <div class="audio-controls">
-        <button id="mic-toggle" class="btn btn-primary">
-          <i class="fas fa-microphone"></i> Ativar Microfone
+    </div>
+    
+    <div class="participants-container" id="participants-container">
+      <!-- Participantes serão carregados aqui dinamicamente -->
+    </div>
+    
+    <div class="audio-controls">
+      <button id="mic-btn" class="btn btn-icon mic-btn">
+        <i class="fas fa-microphone"></i>
+      </button>
+    </div>
+  </div>
+  
+  <!-- Overlay de entrada -->
+  <div class="joining-overlay" id="joining-overlay">
+    <div class="spinner"></div>
+  </div>
+  
+  <!-- Modal de entrada na sala -->
+  <div class="modal-overlay" id="join-modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Entrar em uma Sala</h2>
+        <button class="modal-close" id="join-modal-close">
+          <i class="fas fa-times"></i>
         </button>
-        <div class="audio-status">
-          <span id="mic-status">Microfone: Desativado</span>
-          <div id="volume-meter" class="volume-meter">
-            <div id="volume-bar" class="volume-bar"></div>
+      </div>
+      <div class="modal-body">
+        <form id="join-form">
+          <div class="form-group">
+            <label for="username">Seu Nome</label>
+            <input type="text" id="username" placeholder="Como deseja ser chamado?" required>
           </div>
-        </div>
+          <div class="form-group">
+            <label for="room-selection">Sala</label>
+            <select id="room-selection">
+              <option value="">Selecione uma sala</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="custom-room">Ou crie uma nova sala</label>
+            <input type="text" id="custom-room" placeholder="Digite o nome da sala">
+          </div>
+        </form>
       </div>
-      
-      <div class="users-container">
-        <h2>Usuários na Sala</h2>
-        <div id="users-list" class="users-grid">
-          <!-- Usuários serão adicionados dinamicamente -->
-        </div>
-      </div>
-      
-      <div class="room-status">
-        <div id="connection-status" class="status-indicator connected">
-          Conectado
-        </div>
-        <div id="speaking-indicator" class="status-indicator">
-          Ninguém está falando no momento
-        </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" id="join-modal-cancel">Cancelar</button>
+        <button class="btn btn-primary" id="join-modal-submit">Entrar</button>
       </div>
     </div>
   </div>
-
-  <!-- Modelo para card de sala -->
-  <template id="room-card-template">
-    <div class="room-card">
-      <div class="room-info">
-        <h3 class="room-card-name"></h3>
-        <p class="room-users-count"></p>
+  
+  <!-- Modal de criação de sala -->
+  <div class="modal-overlay" id="create-modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Criar Nova Sala</h2>
+        <button class="modal-close" id="create-modal-close">
+          <i class="fas fa-times"></i>
+        </button>
       </div>
-      <button class="btn btn-primary join-room-btn">Entrar</button>
+      <div class="modal-body">
+        <form id="create-form">
+          <div class="form-group">
+            <label for="room-name">Nome da Sala</label>
+            <input type="text" id="room-name" placeholder="Digite um nome para sua sala" required>
+          </div>
+          <div class="form-group">
+            <label for="create-username">Seu Nome</label>
+            <input type="text" id="create-username" placeholder="Como deseja ser chamado?" required>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" id="create-modal-cancel">Cancelar</button>
+        <button class="btn btn-primary" id="create-modal-submit">Criar Sala</button>
+      </div>
     </div>
-  </template>
-
-  <!-- Modelo para card de usuário -->
-  <template id="user-card-template">
-    <div class="user-card">
-      <div class="avatar">
-        <i class="fas fa-user"></i>
+  </div>
+  
+  <!-- Modal de convite -->
+  <div class="modal-overlay" id="invite-modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Convidar para a Sala</h2>
+        <button class="modal-close" id="invite-modal-close">
+          <i class="fas fa-times"></i>
+        </button>
       </div>
-      <div class="user-info">
-        <p class="username"></p>
-        <div class="speaking-indicator">
-          <i class="fas fa-volume-up"></i>
+      <div class="modal-body">
+        <p>Compartilhe este link para convidar pessoas para a sala:</p>
+        <div class="form-group">
+          <input type="text" id="invite-link" readonly>
         </div>
       </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="copy-invite-link">
+          <i class="fas fa-copy"></i>
+          Copiar Link
+        </button>
+      </div>
     </div>
-  </template>
-
-  <!-- Scripts -->
+  </div>
+  
+  <!-- Scripts externos -->
   <script src="/socket.io/socket.io.js"></script>
-  <script src="app.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.4.7/peerjs.min.js"></script>
+  
+  <!-- Script principal -->
+  <script src="main.js"></script>
 </body>
 </html>
